@@ -614,3 +614,21 @@ footer {
 .cut-preview-wrap { width: 100%; margin-top: 14px; }
 #panelCutErrors li { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
 #panelCutPreview svg { max-height: 75vh; }
+
+/* 背面压印 */
+.backside-box { border-color: #bbf7d0; background: #f7fef9; }
+.backside-box h3 { color: #166534; }
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.checkbox-field input { margin-top: 2px; }
+.backside-legend .swatch.back-axis,
+.path-legend .swatch.back-axis { border-top: 2px dashed #16a34a; }
+.backside-preview-wrap { width: 100%; margin-top: 14px; }
+#pathBacksidePreview svg, #panelBacksidePreview svg { max-height: 75vh; }

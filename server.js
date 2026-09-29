@@ -9,6 +9,7 @@
  *   POST /api/qc/calibrate   质检自动校准
  *   POST /api/path           压印路径（最近邻 + 2-opt，输出逐点作业顺序 / CSV / 叠加 SVG）
  *   POST /api/panel/cut      拼版裁切线（凸点包络 -> 成品边 -> 刀心线，最大统一留边 / 超限定位 / CSV / 叠加 SVG）
+ *   POST /api/backside       背面压印（正面点集沿板材竖直中线镜像 -> 背面点位图；可选镜像并校验压印路径，CSV/SVG）
  *   POST /api/proof          印前校样核对（英文原文 -> 标准盲文单元 vs 粘贴的盲文校样，连续空白折叠后最少编辑对齐）
  */
 'use strict';
@@ -21,6 +22,7 @@ const Panel = require('./lib/panel');
 const EmbossPath = require('./lib/path');
 const PanelCut = require('./lib/cut');
 const Proof = require('./lib/proof');
+const Backside = require('./lib/backside');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -155,6 +157,22 @@ app.post('/api/panel/cut', (req, res) => {
     plateHeight: body.plateHeight,
     margin: body.margin != null ? body.margin : body.minMargin,
     toolRadius: body.toolRadius
+  });
+  res.json(result);
+});
+
+// 背面压印接口：以最近一次成功单标签排版或拼版的 dots（含板材尺寸）为输入，
+// 沿板材竖直中线（x=plateWidth/2）镜像得到背面点位图，保留每点所属标签与原序号，
+// 返回镜像点集 / CSV / SVG；若同时传入该点集生成的压印路径 path（{startX,startY,steps}），
+// 则镜像起点与每个落针坐标、保持 step 顺序与各步空移长度，并严格校验路径原序号及正面坐标
+// 与点集一一对应。板材尺寸缺失、点中心超出板材或路径错配时 ok=false 且不输出部分图或文件。
+app.post('/api/backside', (req, res) => {
+  const body = req.body || {};
+  const result = Backside.planBackside({
+    dots: body.dots,
+    plateWidth: body.plateWidth,
+    plateHeight: body.plateHeight,
+    path: body.path
   });
   res.json(result);
 });

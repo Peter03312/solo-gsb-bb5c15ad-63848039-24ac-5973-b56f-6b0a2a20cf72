@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>盲文标签排版台</h1>
-    <p class="subtitle">六点一级盲文 · 点阵解码 · 印前校样核对 · 整词换行单标签排版 · 多标签行级拼版（0/90° 旋转） · 毫米坐标凸点 SVG · 压印路径（最近邻 + 2-opt） · 拼版裁切线（成品边/刀心线） · 压印质检</p>
+    <p class="subtitle">六点一级盲文 · 点阵解码 · 印前校样核对 · 整词换行单标签排版 · 多标签行级拼版（0/90° 旋转） · 毫米坐标凸点 SVG · 压印路径（最近邻 + 2-opt） · 拼版裁切线（成品边/刀心线） · 背面压印（沿板材竖直中线镜像点位/路径） · 压印质检</p>
     <nav class="mode-tabs" role="tablist" aria-label="工作模式">
       <button id="tabDecode" class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="decode">点阵解码</button>
       <button id="tabProof" class="mode-tab" type="button" role="tab" aria-selected="false" data-mode="proof">印前校样</button>
@@ -190,6 +190,22 @@
           <div id="pathStats" class="stats path-stats" hidden></div>
           <p class="hint">以当前排版凸点为输入，从指定起点先用最近邻生成路线，再执行最多 20 轮 2-opt（每轮按起止下标顺序接受首个严格缩短的反转）；每个凸点恰好访问一次，点数上限 2000，参数非法时不输出部分路径。</p>
         </section>
+
+        <section class="path-box backside-box" aria-label="背面压印（单标签）">
+          <h3>背面压印（镜像到板材背面）</h3>
+          <label class="field checkbox-field">
+            <input id="pathBacksideUsePath" type="checkbox" checked>
+            <span>同时镜像当前压印路径（镜像起点与每个落针坐标，保持 step 顺序与各步空移长度）</span>
+          </label>
+          <div class="actions">
+            <button id="pathBacksideGenerate" type="button" class="btn-secondary">生成背面点位图</button>
+            <button id="pathBacksideDownloadCsv" type="button" disabled>下载背面 CSV</button>
+            <button id="pathBacksideDownloadSvg" type="button" disabled>下载背面 SVG</button>
+          </div>
+          <div id="pathBacksideErrors" class="errors" role="alert" hidden></div>
+          <div id="pathBacksideStats" class="stats path-stats" hidden></div>
+          <p class="hint">以<b>最近一次成功排版</b>的点集为基准，沿板材竖直中线（x = 板宽/2）镜像，得到以板材左上角为原点的背面点位图（x_back = 板宽 − x_front，y 不变），每点保留所属标签与原序号。勾选镜像路径时，路径原序号及正面坐标须与点集一一对应，错配则整张背面作业无效；板材尺寸缺失或点超出板材时不输出任何图或文件。排版或路径更新后旧背面图立即失效。</p>
+        </section>
       </section>
 
       <!-- 右侧：实时预览 -->
@@ -207,6 +223,13 @@
             <span class="path-legend"><i class="swatch nn"></i>最近邻初始路线　<i class="swatch opt"></i>优化后路线（箭头为方向，数字为 step）</span>
           </div>
           <div id="pathPreview" class="preview path-preview"></div>
+        </div>
+        <div id="pathBacksidePreviewWrap" class="path-preview-wrap backside-preview-wrap" hidden>
+          <div class="preview-head">
+            <h2>背面点位图</h2>
+            <span class="path-legend"><i class="swatch back-axis"></i>镜像轴（竖直中线）　<i class="swatch opt"></i>背面作业路线（勾选路径时）</span>
+          </div>
+          <div id="pathBacksidePreview" class="preview path-preview"></div>
         </div>
       </section>
     </section>
@@ -318,6 +341,22 @@ PUSH</textarea>
           <div id="panelCutStats" class="stats path-stats" hidden></div>
           <p class="hint">复用当前成功拼版的每条标签<b>全局凸点</b>、编号与板材尺寸（含 90° 旋转标签，按全局坐标计算）：凸点中心 + 凸点半径形成<b>包络</b>，外扩留边为<b>成品边</b>（红实线），再外扩刀具半径为<b>刀心线</b>（蓝虚线）。整版最大统一留边受<b>板边</b>与<b>标签间刀具占位</b>共同约束；留边超限时逐条指出限制它的板边或标签对，不输出部分刀路。</p>
         </section>
+
+        <section class="path-box backside-box" aria-label="背面压印（拼版）">
+          <h3>背面压印（镜像到板材背面）</h3>
+          <label class="field checkbox-field">
+            <input id="panelBacksideUsePath" type="checkbox" checked>
+            <span>同时镜像当前压印路径（镜像起点与每个落针坐标，保持 step 顺序与各步空移长度）</span>
+          </label>
+          <div class="actions">
+            <button id="panelBacksideGenerate" type="button" class="btn-secondary">生成背面点位图</button>
+            <button id="panelBacksideDownloadCsv" type="button" disabled>下载背面 CSV</button>
+            <button id="panelBacksideDownloadSvg" type="button" disabled>下载背面 SVG</button>
+          </div>
+          <div id="panelBacksideErrors" class="errors" role="alert" hidden></div>
+          <div id="panelBacksideStats" class="stats path-stats" hidden></div>
+          <p class="hint">以<b>最近一次成功拼版</b>的全部凸点为基准，沿板材竖直中线镜像为背面点位图，每点保留<b>所属标签</b>与原序号。勾选镜像路径时会严格核对路径原序号及正面坐标与点集一一对应，任何错配整张背面作业无效；拼版或路径更新后旧背面图立即失效。</p>
+        </section>
       </section>
 
       <!-- 右侧：整板预览 -->
@@ -351,6 +390,13 @@ PUSH</textarea>
             </span>
           </div>
           <div id="panelCutPreview" class="preview path-preview"></div>
+        </div>
+        <div id="panelBacksidePreviewWrap" class="path-preview-wrap backside-preview-wrap" hidden>
+          <div class="preview-head">
+            <h2>背面点位图</h2>
+            <span class="path-legend"><i class="swatch back-axis"></i>镜像轴（竖直中线）　<i class="swatch opt"></i>背面作业路线（勾选路径时）</span>
+          </div>
+          <div id="panelBacksidePreview" class="preview path-preview"></div>
         </div>
       </section>
     </section>
@@ -456,6 +502,7 @@ PUSH</textarea>
   <script src="../lib/qc.js"></script>
   <script src="../lib/path.js"></script>
   <script src="../lib/cut.js"></script>
+  <script src="../lib/backside.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

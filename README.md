@@ -12,6 +12,7 @@
 - 页面实时预览带毫米（mm）坐标的凸点 SVG（拼版同时画出**每个标签的边界与索引/旋转角**），并可下载 **SVG** 与**排版 JSON**（含标签索引与旋转角）
 - **压印路径**：单标签排版或多标签拼版成功后，指定压印起点 (X/Y mm) 即可生成压印机逐点作业顺序——先以**最近邻**从起点走出初始路线，再执行**最多 20 轮 2-opt**（每轮按反转段起止下标顺序接受首个**严格缩短**的反转）；同距离时按**标签索引 → 点坐标 (x,y) → 原序号**稳定决胜，相同输入结果严格一致，**每个凸点恰好访问一次**。界面显示优化前/后空移总长与节省比例，叠加预览画出带 step 序号与方向箭头的路径，可下载含 `step,label,x_mm,y_mm,travel_mm` 的 CSV；**点数超过 2000 或参数非法时明确报错，不输出部分路径**
 - **拼版裁切线**：复用最近一次**成功拼版**的每条标签**全局凸点、编号与板材尺寸**（旋转 90° 标签同样按全局坐标处理）。输入**凸点到成品边的最小留边**与**刀具半径**：以凸点中心加凸点半径形成**包络**，外扩留边生成各标签的**矩形成品边**，再外扩刀具半径得到**刀心线**（半径刀沿成品边切削时的刀心轨迹）。系统计算整版允许的**最大统一留边**，同时受**板边**（刀心线不得越出板材）与**标签之间的刀具占位**（相邻刀心占位矩形不得相交）共同约束；输入留边超限时**逐条指出限制它的板边（哪条边/距包络多少）或标签对（编号/x、y 方向净间距）**，且**不输出部分刀路**。可行时在拼版预览上叠加裁切线（灰点虚线包络、红实线成品边、蓝虚线刀心线 + 标签编号 + 成品边四角毫米坐标），并导出含**标签编号、原文、旋转角与成品边/刀心线四角毫米坐标**的 **CSV 与 SVG**
+- **背面压印**：板材从背面压印时，以最近一次成功的单标签排版或拼版点集为基准，沿**板材竖直中线**镜像得到以板材左上角为原点的背面点位图（`x_back=板宽−x_front`，y 不变），每点保留**所属标签与原序号**及正面坐标，可下载 **CSV/SVG**；勾选时可一并镜像由该点集生成的**压印路径**——镜像起点与每个落针坐标、**保持 step 顺序与各步空移长度**，并严格校验路径原序号与正面坐标和点集**一一对应**，任何错配整张背面作业无效；板材尺寸缺失、点中心超出板材或路径错配时**明确报错、不输出部分图或文件**；排版/拼版/路径一更新旧背面图立即失效
 - **压印质检**：粘贴实测凸点 CSV、设置校准旋转角/偏移/合格公差/关联半径，叠加 SVG 区分四类结果并下载质检报告 CSV；质检页可一键选择**最近一次成功的单标签排版或多标签拼版**作为基准——拼版基准显示标签数量及各标签索引/旋转角，请求直接使用拼版返回的顶层 `dots`（保留 `label`、`rotation` 元数据），叠加图与 CSV 报告会标注每个结果所属标签；尚无成功拼版时拼版基准按钮禁用并提示先完成拼版
 - **自动校准**：实测点顺序无须对应，设置 X/Y 最大校准量后一键估算全局平移并写回偏移、自动重跑；另可设置**最大旋转角与角度步长**启用**小角度刚体校准**（围绕板材中心的旋转 × 平移联合搜索）；正确处理缺失点与多余点，不使用质心差
 
@@ -194,6 +195,33 @@ npm test           # 运行转换/排版/质检单元测试（node:test）
 - **下载裁切 CSV**：UTF-8 BOM（Excel 直接打开）、CRLF，表头 **19 列**：
   `label,text,rotation_deg,` + 成品边四角（`finish_tl/tr/br/bl_x/y_mm`，8 列）+ 刀心线四角（`tool_tl/tr/br/bl_x/y_mm`，8 列）；四角按**左上 → 右上 → 右下 → 左下（顺时针）**排列，标签原文含逗号/引号时按 RFC4180 转义；
 - **下载裁切 SVG**：独立整板 SVG 文档，含全部三层矩形、编号与四角坐标，根节点带 `data-label-count / data-margin / data-tool-radius / data-max-margin`，每组带 `data-label-index / data-rotation`。
+
+## 背面压印模式（从背面压印的镜像点位/路径）
+
+板材**从背面压印**时，正面排版图的点位不能直接交给压印机。在「**排版模式**」或「**多标签拼版**」页签完成一次成功结果后，左侧「**背面压印**」区域即可使用：点击「**生成背面点位图**」，系统以**最近一次成功的单标签排版或拼版结果**为基准，沿**板材竖直中线**（`x = plateWidth/2`）镜像得到背面点位图。
+
+镜像与坐标（单位 mm，**背面坐标仍以板材左上角为原点**，x 向右、y 向下）：
+
+- `x_back = plateWidth − x_front`（左右翻转），`y_back = y_front`（沿竖直中线镜像，y 不变）；
+- 每个背面点保留**所属标签** `label`（单标签排版为空；拼版点为标签 1 基索引）与**原序号** `seq`（即所选点集 `dots` 的 1 基下标），同时回带正面坐标 `frontX/frontY`，便于逐点核对。
+
+**连同压印路径一起镜像**（勾选「同时镜像当前压印路径」，默认勾选）：
+
+- 仅在当前点集已生成**成功压印路径**时可用——取该路径的 `startX/startY` 与 `steps`，把**起点与每个落针坐标**做同样的 x 镜像（背面起点 `(plateWidth−startX, startY)`）；
+- **step 顺序保持不变、各步空移长度保持不变**（镜像为刚体反射，是等距变换，结果中仍逐段复核空移长度），即直接按同一份作业顺序把机头走到镜像后的位置即可；
+- **严格一一对应校验**：路径步数必须等于点数、每个 `seq` 必须是 `1..n` 且不重复、每步的正面坐标 `(x,y)`（连同 `label` 归属）必须与所选点集中 `seq` 对应点一致。**任何错配（用了其它点集/旧排版的路径、路径被改动）都判定整张背面作业无效**。
+
+预览与下载：
+
+- 右侧「**背面点位图**」绘制整板、绿色虚线为镜像轴（板材竖直中线）；每个凸点为镜像后的位置，悬停 `<title>` 显示原序号、所属标签与“正面→背面”坐标；勾选路径时另叠加蓝色带箭头的**背面作业路线**、绿色三角的**背面起点**与每步 `step` 序号（首点绿圈、末点橙圈）；
+- 「**下载背面 CSV**」（UTF-8 BOM / CRLF）：仅点位时表头为 **`seq,label,front_x_mm,front_y_mm,back_x_mm,back_y_mm`**；连同路径时为 **`step,seq,label,front_x_mm,front_y_mm,back_x_mm,back_y_mm,travel_mm`**（单标签 `label` 留空）；
+- 「**下载背面 SVG**」为独立整板 SVG，根节点带 `data-side="back" / data-mode="layout|panel" / data-point-count / data-has-path`，点元素带 `data-seq`（拼版点另带 `data-label`）。
+
+失效与报错（**绝不输出部分图或文件**）：
+
+- **板材尺寸缺失/非正**（`plateWidth/plateHeight`）、`dots` 缺失/为空、某点坐标非法、**点中心超出板材**（`x<0 / x>板宽 / y<0 / y>板高`，定位到第几个点，类型 `point-out-of-plate`）、点数超过 2000：`ok=false` 且 `dots/steps/svg/csv` 全空；
+- **路径错配**：`ok=false`，错误类型统一为 `path-mismatch`，定位到第几步/原序号（步数不符、seq 越界/重复、正面坐标不符、标签归属不符、缺起点等），同样不输出任何部分结果；
+- **排版、拼版或压印路径一更新，旧背面图立即失效**（成功、失败或改起点重算路径都会清空背面预览与下载），需重新点击「生成背面点位图」，从根上杜绝背面作业与旧点集/旧路径错位。
 
 ## 压印质检模式
 
@@ -402,6 +430,57 @@ else if (r.verdict === 'mismatch') {
 - `svg` 为叠加在板材上的裁切线（灰点虚线包络、红实线成品边、蓝虚线刀心线、编号、旋转标记、成品边四角 mm 坐标、凸点定位点）；`csv` 为 UTF-8 BOM/CRLF 文本，19 列：`label,text,rotation_deg,finish_*四角8列,tool_*四角8列`；
 - `ok=false`（输入留边超过 `maxMargin`、`maxMargin<0`、留边/刀径/板材参数非法、`labels` 缺失或非法、凸点坐标非法、编号重复/缺失、标签数 >100）时 `cuts` 为空数组、`stats` 为 `null`、`svg/csv` 为 `null`（失败时仍返回 `maxMargin/binding` 供界面提示允许值）；`errors[]` 第一条为最紧约束，板边超限类型 `plate-edge-limit`（带 `labelIndex/edge/distMm/limitMm`），标签对超限类型 `label-pair-limit`（带 `labelA/labelB/gapXMm/gapYMm/limitMm`），留边 0 也放不下时另含 `no-feasible-margin`——**绝不输出部分刀路**。
 
+### `POST /api/backside`
+
+背面压印。`dots` 取最近一次**成功** `/api/layout`（单标签点 `{x,y,r,...}`）或 `/api/panel`（拼版顶层 `dots[]`，额外含 `label` 等元数据）的返回结果；`plateWidth/plateHeight` 必须是该点集对应的板材尺寸。沿板材竖直中线镜像：`x_back=plateWidth−x_front`、`y_back=y_front`。
+
+仅镜像点集：
+
+```json
+{
+  "dots": [{ "x": 5, "y": 5, "r": 0.75 }, { "x": 7.5, "y": 5, "r": 0.75 }],
+  "plateWidth": 100, "plateHeight": 50
+}
+```
+
+连同由该点集生成的压印路径一起镜像（`path` 直接透传 `/api/path` 返回的 `params.startX/startY` 与 `steps`）：
+
+```json
+{
+  "dots": [ /* /api/layout 或 /api/panel 成功结果的 dots */ ],
+  "plateWidth": 100, "plateHeight": 50,
+  "path": { "startX": 0, "startY": 0, "steps": [ /* /api/path 的 steps */ ] }
+}
+```
+
+返回 `{ ok, errors, side:"back", mode:"layout"|"panel", plateWidth, plateHeight, mirrorAxisX, pointCount, labelCount, dots[], path, steps[], stats, svg, csv }`：
+
+- `dots[]` 每点为 `{ seq, label, frontX, frontY, x, y, backX, backY, r, line, cell, dot }`：`seq` 为输入点集的 1 基原序号，`label` 单标签为 `null` / 拼版为标签索引，`frontX/frontY` 为正面坐标，`x/y`（=`backX/backY`）为背面坐标；
+- 传了 `path` 且校验通过时：`path = { frontStartX, frontStartY, startX, startY, steps[] }`（`startX/startY` 为镜像后的背面起点），顶层 `steps[]` 同 `path.steps`；每步 `{ step, label, seq, frontX, frontY, x, y, travel_mm }`，**step 顺序与 `travel_mm` 与正面路径逐项一致**；未传 `path` 时 `path=null`、`steps=[]`、`stats.withPath=false`；
+- `stats` 含 `pointCount / labelCount / labels[] / plateWidth / plateHeight / mirrorAxisX / withPath`；
+- `csv` 为 UTF-8 BOM/CRLF 文本：无路径 6 列 `seq,label,front_x_mm,front_y_mm,back_x_mm,back_y_mm`，有路径 8 列 `step,seq,label,front_x_mm,front_y_mm,back_x_mm,back_y_mm,travel_mm`；
+- `svg` 为整板背面图（镜像轴、`id="back-dots"`、每点 `data-seq`[`data-label`]；有路径时另含 `class="back-path"`、背面起点与每步 `data-step`）。
+- `ok=false`（板材尺寸缺失/非正、`dots` 缺失/为空、坐标非法、点中心超出板材 `point-out-of-plate`、点数超 2000、路径步数不符/`seq` 越界或重复/正面坐标或标签与点集不符/缺起点等 `path-mismatch`）时 `dots/steps` 为空数组、`path/stats/svg/csv` 为 `null`，错误定位到第几个点或第几步——**错配则整张背面作业无效，绝不输出部分图或文件**。
+
+调用示例（先排版，再用其结果生成背面点位图与镜像路径）：
+
+```bash
+# 1) 单标签排版
+curl -s -X POST http://localhost:3000/api/layout \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"EXIT","plateWidth":100,"plateHeight":50}' > layout.json
+
+# 2) 生成压印路径
+node -e 'const l=require("./layout.json");process.stdout.write(JSON.stringify({dots:l.dots,startX:0,startY:0,plateWidth:100,plateHeight:50}))' \
+  | curl -s -X POST http://localhost:3000/api/path -H 'Content-Type: application/json' --data @- > path.json
+
+# 3) 连同路径一起生成背面作业（path 透传起点与 steps）
+node -e 'const l=require("./layout.json"),p=require("./path.json");process.stdout.write(JSON.stringify({dots:l.dots,plateWidth:100,plateHeight:50,path:{startX:p.params.startX,startY:p.params.startY,steps:p.steps}}))' \
+  | curl -s -X POST http://localhost:3000/api/backside -H 'Content-Type: application/json' --data @-
+
+# 拼版场景把第 1 步换成 /api/panel，并直接使用其顶层 dots（每点带 label）即可
+```
+
 ### `POST /api/qc`
 
 ```json
@@ -460,12 +539,13 @@ else if (r.verdict === 'mismatch') {
 ## 项目结构
 
 ```
-├── server.js            # Express 服务：静态页面 + /api/decode + /api/proof + /api/layout + /api/panel + /api/panel/cut + /api/path + /api/qc + /api/qc/calibrate
+├── server.js            # Express 服务：静态页面 + /api/decode + /api/proof + /api/layout + /api/panel + /api/panel/cut + /api/path + /api/backside + /api/qc + /api/qc/calibrate
 ├── lib/braille.js       # 核心：一级盲文转换（带来源位置）、点阵解码（盲文 -> 文本/逐单元/未知字符定位）、整词换行排版、毫米坐标 SVG 生成
 ├── lib/proof.js         # 核心：印前校样核对（原文 -> 标准单元 vs 盲文校样；连续空白折叠、大写/数字前缀参与、稳定最少编辑对齐与逐处非法字符报错）
 ├── lib/panel.js         # 核心：多标签解析、单行矩形复用、0/90° 行级装箱（剩余面积最小稳定择优）、整板 SVG/JSON
 ├── lib/cut.js           # 核心：拼版裁切线（全局凸点包络 -> 外扩留边成品边 -> 外扩刀径刀心线；板边/标签对刀具占位求最大统一留边、超限定位、四角坐标 CSV/叠加 SVG）
 ├── lib/path.js          # 核心：压印路径（最近邻 + 同距离稳定决胜、最多 20 轮首改进 2-opt、steps/CSV/叠加 SVG）
+├── lib/backside.js      # 核心：背面压印（正面点集沿板材竖直中线镜像，保留标签/原序号/正面坐标；可选镜像并严格校验压印路径，点位/路径 CSV 与整板 SVG）
 ├── lib/qc.js            # 核心：实测 CSV 解析（行号定位）、一对一最优匹配、判定/SVG/CSV 报告、自动校准（纯平移 + 小角度刚体）
 ├── public/              # 原生前端（index.html / app.js / style.css，五个页签：点阵解码 + 印前校样 + 排版/拼版（内置压印路径与拼版裁切线区）+ 质检）
 ├── test/                # node:test 单元/接口测试（点阵解码 + 印前校样核对 + 排版 + 拼版 + 裁切线 + 压印路径 + 质检 + HTTP API）

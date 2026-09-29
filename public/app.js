@@ -122,6 +122,8 @@
           lastResult = r;
           // 排版结果已变化：旧压印路径与新凸点集不再对应，作废待重新生成
           invalidateLayoutPath();
+          // 背面点位图同样绑定最近一次成功排版，立即失效
+          invalidateLayoutBackside();
           // 质检基准：记录最近一次成功排版（含时间戳与完整参数）
           lastBaseline = {
             time: fmtTime(new Date()),
@@ -140,6 +142,7 @@
         } else {
           lastResult = null;
           invalidateLayoutPath();
+          invalidateLayoutBackside();
           statsBox.hidden = true;
           brailleLine.textContent = '';
           preview.innerHTML = '<p class="placeholder">排版失败：请根据左侧原因调整参数</p>';
@@ -151,6 +154,7 @@
       .catch(function () {
         lastResult = null;
         invalidateLayoutPath();
+        invalidateLayoutBackside();
         statsBox.hidden = true;
         preview.innerHTML = '<p class="placeholder">无法连接服务器</p>';
         renderErrors([{ message: '网络请求失败，请确认服务已启动。' }]);
@@ -266,6 +270,9 @@
           }
         } else {
           lastPanel = null;
+          invalidatePanelPath();
+          invalidateCut();
+          invalidatePanelBackside();
           panelStatsBox.hidden = true;
           panelPreview.innerHTML = '<p class="placeholder">无法连接服务器</p>';
           renderPanelErrors([{ message: '网络请求失败，请确认服务已启动。' }]);
@@ -279,9 +286,10 @@
   function handlePanelResult(r) {
     if (r.ok) {
       lastPanel = r;
-      // 拼版结果已变化：旧压印路径与旧裁切线与新凸点集不再对应，作废待重新生成
+      // 拼版结果已变化：旧压印路径、旧裁切线、旧背面图与新凸点集不再对应，作废待重新生成
       invalidatePanelPath();
       invalidateCut();
+      invalidatePanelBackside();
       // 质检拼版基准：记录最近一次成功拼版（含时间戳、标签索引/旋转角与带元数据的全局 dots）
       lastPanelBaseline = {
         time: fmtTime(new Date()),
@@ -304,6 +312,7 @@
       lastPanel = null;
       invalidatePanelPath();
       invalidateCut();
+      invalidatePanelBackside();
       panelStatsBox.hidden = true;
       renderPanelErrors(r.errors || [{ message: '未知错误' }]);
       btnPanelSvg.disabled = true;
@@ -676,6 +685,11 @@
     var timer = null;
     var lastPath = null; // 最近一次成功路径（用于下载 CSV）
 
+    function notifyChanged() {
+      // 路径被新建/作废时通知关联的背面作业（旧背面图须随路径更新立即失效）
+      if (typeof opts.onPathChange === 'function') opts.onPathChange(lastPath);
+    }
+
     function renderErrors(errors) {
       errBox.innerHTML = '';
       var ul = document.createElement('ul');
@@ -709,6 +723,7 @@
       errBox.hidden = true;
       previewWrap.hidden = true;
       previewBox.innerHTML = '<p class="placeholder">' + placeholder + '</p>';
+      notifyChanged();
     }
 
     function handleResult(r) {
@@ -726,6 +741,7 @@
         previewWrap.hidden = true;
         renderErrors(r.errors || [{ message: '未知错误' }]);
       }
+      notifyChanged();
     }
 
     function run() {
@@ -781,7 +797,7 @@
       });
     });
 
-    return { invalidate: invalidate, run: run };
+    return { invalidate: invalidate, run: run, getPath: function () { return lastPath; } };
   }
 
   // 单标签排版页签：数据来源为最近一次成功排版
@@ -797,6 +813,10 @@
         plateWidth: lastResult.params.plateWidth,
         plateHeight: lastResult.params.plateHeight
       } : null;
+    },
+    onPathChange: function () {
+      // 路径生成/重算/作废后，旧背面图立即失效（背面路径必须与当前路径一一对应）
+      invalidateLayoutBackside();
     }
   });
 
@@ -813,6 +833,9 @@
         plateWidth: lastPanel.params.plateWidth,
         plateHeight: lastPanel.params.plateHeight
       } : null;
+    },
+    onPathChange: function () {
+      invalidatePanelBackside();
     }
   });
 
@@ -822,6 +845,166 @@
   }
   function invalidatePanelPath() {
     panelPathTool.invalidate('拼版参数已变化，请重新点击「生成压印路径」');
+  }
+
+  /* ================= 背面压印（单标签 + 拼版共用） ================= */
+
+  // 两个页签各有一套背面作业控件；工厂封装与“最近成功点集 + 当前路径”绑定的全部行为
+  function createBacksideTool(opts) {
+    var usePathEl = document.getElementById(opts.usePathId);
+    var genBtn = document.getElementById(opts.genId);
+    var csvBtn = document.getElementById(opts.csvId);
+    var svgBtn = document.getElementById(opts.svgId);
+    var errBox = document.getElementById(opts.errId);
+    var statBox = document.getElementById(opts.statId);
+    var wrap = document.getElementById(opts.wrapId);
+    var previewBox = document.getElementById(opts.previewId);
+
+    var lastBack = null; // 最近一次成功的背面作业（用于下载 CSV/SVG）
+
+    function renderErrors(errors) {
+      errBox.innerHTML = '';
+      var ul = document.createElement('ul');
+      errors.forEach(function (e) {
+        var li = document.createElement('li');
+        li.textContent = e.message;
+        ul.appendChild(li);
+      });
+      errBox.appendChild(ul);
+      errBox.hidden = false;
+    }
+
+    function renderStats(r) {
+      var pathInfo = r.stats.withPath
+        ? '；已<b>连同压印路径镜像</b>（' + r.path.steps.length + ' 步，背面起点 ' +
+          r.path.startX + ', ' + r.path.startY + ' mm，step 顺序与空移长度不变）'
+        : '';
+      var labelInfo = r.labelCount > 0 ? '覆盖 <b>' + r.labelCount + '</b> 个标签、' : '';
+      statBox.innerHTML =
+        '背面共 <b>' + r.pointCount + '</b> 点，' + labelInfo +
+        '镜像轴 x=<b>' + r.mirrorAxisX + '</b> mm（' + r.plateWidth + ' × ' + r.plateHeight + ' mm 板材）' +
+        pathInfo;
+      statBox.hidden = false;
+    }
+
+    // 排版/拼版/路径更新后旧背面图立即失效：清空预览与下载
+    function invalidate(placeholder) {
+      lastBack = null;
+      csvBtn.disabled = true;
+      svgBtn.disabled = true;
+      statBox.hidden = true;
+      errBox.hidden = true;
+      wrap.hidden = true;
+      previewBox.innerHTML = '<p class="placeholder">' + placeholder + '</p>';
+    }
+
+    function handleResult(r) {
+      if (r.ok) {
+        lastBack = r;
+        errBox.hidden = true;
+        wrap.hidden = false;
+        previewBox.innerHTML = r.svg.replace(/^<\?xml[^?]*\?>\s*/, '');
+        renderStats(r);
+        csvBtn.disabled = false;
+        svgBtn.disabled = false;
+      } else {
+        // 错配/超限：明确报错，且不展示任何部分图、不开放下载
+        lastBack = null;
+        csvBtn.disabled = true;
+        svgBtn.disabled = true;
+        wrap.hidden = true;
+        statBox.hidden = true;
+        renderErrors(r.errors || [{ message: '未知错误' }]);
+      }
+    }
+
+    function run() {
+      var src = opts.source();
+      if (!src || !src.dots || !src.dots.length) {
+        handleResult({ ok: false, errors: [{ message: '请先完成一次成功的排版/拼版，再生成背面点位图。' }] });
+        return;
+      }
+      var payload = { dots: src.dots, plateWidth: src.plateWidth, plateHeight: src.plateHeight };
+      // 勾选“同时镜像压印路径”：只取由当前点集刚生成的路径；无路径时明确提示
+      if (usePathEl.checked) {
+        var p = opts.pathSource();
+        if (!p || !p.steps || !p.steps.length) {
+          handleResult({ ok: false, errors: [{ message: '勾选了镜像压印路径，但当前点集尚未生成压印路径；请先在上方「压印路径」区生成成功后再生成背面作业。' }] });
+          return;
+        }
+        payload.path = { startX: p.params.startX, startY: p.params.startY, steps: p.steps };
+      }
+      fetch('/api/backside', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(function (res) { return res.json(); })
+        .then(handleResult)
+        .catch(function () {
+          // 服务不可用时回退到浏览器内置同构实现
+          if (window.Backside) {
+            try {
+              handleResult(Backside.planBackside(payload));
+            } catch (e) {
+              handleResult({ ok: false, errors: [{ message: '背面作业计算失败：' + e.message }] });
+            }
+          } else {
+            handleResult({ ok: false, errors: [{ message: '网络请求失败，请确认服务已启动。' }] });
+          }
+        });
+    }
+
+    genBtn.addEventListener('click', run);
+    csvBtn.addEventListener('click', function () {
+      if (lastBack) download(opts.csvName, 'text/csv;charset=utf-8', lastBack.csv);
+    });
+    svgBtn.addEventListener('click', function () {
+      if (lastBack) download(opts.svgName, 'image/svg+xml;charset=utf-8', lastBack.svg);
+    });
+
+    return { invalidate: invalidate, run: run };
+  }
+
+  // 单标签排版页签背面作业
+  var layoutBacksideTool = createBacksideTool({
+    usePathId: 'pathBacksideUsePath',
+    genId: 'pathBacksideGenerate', csvId: 'pathBacksideDownloadCsv', svgId: 'pathBacksideDownloadSvg',
+    errId: 'pathBacksideErrors', statId: 'pathBacksideStats',
+    wrapId: 'pathBacksidePreviewWrap', previewId: 'pathBacksidePreview',
+    csvName: 'backside-layout.csv', svgName: 'backside-layout.svg',
+    source: function () {
+      return lastResult ? {
+        dots: lastResult.dots,
+        plateWidth: lastResult.params.plateWidth,
+        plateHeight: lastResult.params.plateHeight
+      } : null;
+    },
+    pathSource: function () { return layoutPathTool.getPath(); }
+  });
+
+  // 多标签拼版页签背面作业
+  var panelBacksideTool = createBacksideTool({
+    usePathId: 'panelBacksideUsePath',
+    genId: 'panelBacksideGenerate', csvId: 'panelBacksideDownloadCsv', svgId: 'panelBacksideDownloadSvg',
+    errId: 'panelBacksideErrors', statId: 'panelBacksideStats',
+    wrapId: 'panelBacksidePreviewWrap', previewId: 'panelBacksidePreview',
+    csvName: 'backside-panel.csv', svgName: 'backside-panel.svg',
+    source: function () {
+      return lastPanel ? {
+        dots: lastPanel.dots,
+        plateWidth: lastPanel.params.plateWidth,
+        plateHeight: lastPanel.params.plateHeight
+      } : null;
+    },
+    pathSource: function () { return panelPathTool.getPath(); }
+  });
+
+  function invalidateLayoutBackside() {
+    layoutBacksideTool.invalidate('排版参数已变化，请重新点击「生成背面点位图」');
+  }
+  function invalidatePanelBackside() {
+    panelBacksideTool.invalidate('拼版参数已变化，请重新点击「生成背面点位图」');
   }
 
   /* ================= 拼版裁切线 ================= */

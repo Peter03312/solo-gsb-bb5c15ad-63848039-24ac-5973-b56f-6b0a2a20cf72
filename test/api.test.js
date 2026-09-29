@@ -421,6 +421,98 @@ test('POST /api/proof 非字符串输入返回 bad-input；字段名 proof 兼�
   assert.equal(alias.json.verdict, 'pass');
 });
 
+test('POST /api/backside 单标签排版点集：沿竖直中线镜像并保留原序号，返回 CSV/SVG', async () => {
+  const layout = await postJson('/api/layout', { text: 'EXIT Door 2', plateWidth: 100, plateHeight: 50 });
+  assert.equal(layout.json.ok, true);
+  const r = await postJson('/api/backside', { dots: layout.json.dots, plateWidth: 100, plateHeight: 50 });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.side, 'back');
+  assert.equal(r.json.mode, 'layout');
+  assert.equal(r.json.mirrorAxisX, 50);
+  assert.equal(r.json.pointCount, layout.json.dots.length);
+  r.json.dots.forEach((d, i) => {
+    const f = layout.json.dots[i];
+    assert.equal(d.seq, i + 1);
+    assert.equal(d.label, null);
+    assert.equal(d.frontX, f.x);
+    assert.equal(d.x, Math.round((100 - f.x) * 1000) / 1000);
+    assert.equal(d.y, f.y);
+  });
+  const lines = r.json.csv.replace(/^﻿/, '').split('\r\n');
+  assert.equal(lines[0], 'seq,label,front_x_mm,front_y_mm,back_x_mm,back_y_mm');
+  assert.match(r.json.svg, /data-side="back"/);
+  assert.match(r.json.svg, /class="mirror-axis"/);
+});
+
+test('POST /api/backside 拼版点集保留标签，且连同压印路径一起镜像（顺序/空移不变）', async () => {
+  const panel = await postJson('/api/panel', { labels: 'EXIT\nWOMEN\nMEN', plateWidth: 120, plateHeight: 80 });
+  assert.equal(panel.json.ok, true);
+  const p = await postJson('/api/path', {
+    dots: panel.json.dots, startX: 2, startY: 3, plateWidth: 120, plateHeight: 80
+  });
+  assert.equal(p.json.ok, true);
+
+  const r = await postJson('/api/backside', {
+    dots: panel.json.dots,
+    plateWidth: 120, plateHeight: 80,
+    path: { startX: 2, startY: 3, steps: p.json.steps }
+  });
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.mode, 'panel');
+  assert.deepEqual(r.json.stats.labels, [1, 2, 3]);
+  assert.equal(r.json.path.startX, 118);
+  assert.equal(r.json.path.startY, 3);
+  assert.equal(r.json.path.steps.length, p.json.steps.length);
+  r.json.path.steps.forEach((s, k) => {
+    const o = p.json.steps[k];
+    assert.equal(s.step, o.step);
+    assert.equal(s.seq, o.seq);
+    assert.equal(s.label, o.label);
+    assert.ok(Math.abs(s.x - (120 - o.x)) < 1e-9);
+    assert.equal(s.y, o.y);
+    assert.ok(Math.abs(s.travel_mm - o.travel_mm) < 0.002);
+  });
+  const lines = r.json.csv.replace(/^﻿/, '').split('\r\n');
+  assert.equal(lines[0], 'step,seq,label,front_x_mm,front_y_mm,back_x_mm,back_y_mm,travel_mm');
+  assert.match(r.json.svg, /class="back-path"/);
+  assert.match(r.json.svg, /data-step="1"/);
+});
+
+test('POST /api/backside 路径与点集错配（坐标被改）：ok=false 且无部分图/文件', async () => {
+  const layout = await postJson('/api/layout', { text: 'ab', plateWidth: 100, plateHeight: 50 });
+  const p = await postJson('/api/path', { dots: layout.json.dots, startX: 0, startY: 0 });
+  const steps = p.json.steps.map(s => Object.assign({}, s));
+  steps[0].x = steps[0].x + 1;
+  const r = await postJson('/api/backside', {
+    dots: layout.json.dots, plateWidth: 100, plateHeight: 50,
+    path: { startX: 0, startY: 0, steps }
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.errors[0].type, 'path-mismatch');
+  assert.deepEqual(r.json.dots, []);
+  assert.deepEqual(r.json.steps, []);
+  assert.equal(r.json.path, null);
+  assert.equal(r.json.svg, null);
+  assert.equal(r.json.csv, null);
+});
+
+test('POST /api/backside 板材尺寸缺失 / 点超出板材：明确报错且不输出', async () => {
+  const layout = await postJson('/api/layout', { text: 'ab', plateWidth: 100, plateHeight: 50 });
+  const noDim = await postJson('/api/backside', { dots: layout.json.dots });
+  assert.equal(noDim.json.ok, false);
+  assert.equal(noDim.json.svg, null);
+  assert.ok(noDim.json.errors.some(e => e.field === 'plateWidth'));
+
+  const out = await postJson('/api/backside', {
+    dots: layout.json.dots.concat([{ x: 120, y: 5 }]),
+    plateWidth: 100, plateHeight: 50
+  });
+  assert.equal(out.json.ok, false);
+  assert.equal(out.json.errors[0].type, 'point-out-of-plate');
+  assert.equal(out.json.csv, null);
+});
+
 test('GET /api/health 健康检查正常', async () => {  const r = await new Promise((resolve, reject) => {
     http.get(baseUrl + '/api/health', res => {
       let data = '';
@@ -452,6 +544,9 @@ test('静态资源：/lib/panel.js 与首页可访问', async () => {
   const cutLib = await fetchText('/lib/cut.js');
   assert.equal(cutLib.status, 200);
   assert.match(cutLib.body, /planCuts/);
+  const backsideLib = await fetchText('/lib/backside.js');
+  assert.equal(backsideLib.status, 200);
+  assert.match(backsideLib.body, /planBackside/);
   const page = await fetchText('/');
   assert.equal(page.status, 200);
   assert.match(page.body, /tabPanel/);
@@ -463,4 +558,6 @@ test('静态资源：/lib/panel.js 与首页可访问', async () => {
   assert.match(page.body, /压印路径/);
   assert.match(page.body, /拼版裁切线/);
   assert.match(page.body, /panelCutGenerate/);
+  assert.match(page.body, /背面压印/);
+  assert.match(page.body, /pathBacksideGenerate|panelBacksideGenerate/);
 });
